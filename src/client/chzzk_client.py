@@ -1,3 +1,5 @@
+import logging
+
 import requests
 from schemas.response_models import SuccessResponse, FailResponse
 from typing import TypeVar

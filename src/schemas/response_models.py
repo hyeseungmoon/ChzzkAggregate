@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import List
+from domain.channel_item import ChannelItem
 from domain.live_item import LiveItem
 
 class PageInfo(BaseModel):
@@ -8,6 +9,9 @@ class PageInfo(BaseModel):
 class LiveResponseBody(BaseModel):
     data: List[LiveItem]
     page: PageInfo
+
+class ChannelResponseBody(BaseModel):
+    data: List[ChannelItem]
 
 class SuccessResponse[T](BaseModel):
     code: int
