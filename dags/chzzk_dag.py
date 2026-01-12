@@ -41,7 +41,7 @@ with DAG(
     dag_id="chzzk_parse_dag",
     description="parse Chzzk's Live items and Channel items",
     start_date=datetime(2026, 1, 12, tz=timezone("Asia/Seoul")),
-    schedule="*/30 * * * *",
+    schedule="*/6 * * * *",
     tags=["chzzk"],
 ) as dag:
 
