@@ -19,9 +19,9 @@ from repositories.channel_snapshot_repository import ChannelSnapshotRepository
 from repositories.live_snapshot_repository import LiveSnapshotRepository
 from repositories.channel_repository import ChannelRepository
 
-CHZZK_API_CONN_ID = "chzzk_api_conn"
-S3_CONN_ID = "rustfs-bucket"
-MONGODB_CONN_ID = "mongodb_conn"
+CHZZK_API_CONN_ID = "CHZZK_API_CONN"
+S3_CONN_ID = "S3_CONN"
+MONGODB_CONN_ID = "MONGODB_CONN"
 BUCKET_NAME = "chzzk-bucket"
 LIVE_RAW_DATA_S3_PREFIX = "live_raw_data"
 CHANNEL_RAW_DATA_S3_PREFIX = "channel_raw_data"
@@ -66,21 +66,16 @@ with DAG(
         live_items = parse_live_data(chzzk_client)
 
         hook = S3Hook(aws_conn_id=S3_CONN_ID)
-        key = push_items_to_bucket(hook, live_items, LIVE_RAW_DATA_S3_PREFIX, context["ts_nodash"])
-        return key
+        push_items_to_bucket(hook, live_items, LIVE_RAW_DATA_S3_PREFIX, context["ts_nodash"])
 
     def collect_chzzk_channel_raw_data_from_live(**context):
-        ti = context["ti"]
         chzzk_client = get_chzzk_client()
-        key = ti.xcom_pull(task_ids="collect_chzzk_live_raw_data")
-
+        live_raw_data_key = f"{LIVE_RAW_DATA_S3_PREFIX}/{context["ts_nodash"]}.json"
         hook = S3Hook(aws_conn_id=S3_CONN_ID)
-        live_items = json.loads(hook.read_key(key, bucket_name=BUCKET_NAME))
+        live_items = json.loads(hook.read_key(live_raw_data_key, bucket_name=BUCKET_NAME))
         channel_ids = extract_channel_ids(live_items)
         channel_items = parse_channel_data(chzzk_client, channel_ids)
-
         push_items_to_bucket(hook, channel_items, CHANNEL_RAW_DATA_S3_PREFIX, context["ts_nodash"])
-
 
     def load_snapshots_from_s3(
             *,
@@ -165,13 +160,6 @@ with DAG(
             ts_nodash=context["ts_nodash"],
         )
 
-
-
-
-
-
-
-
     start_task = EmptyOperator(
         task_id='start_task'
     )
@@ -216,6 +204,3 @@ with DAG(
         )
 
     start_task >> latest_only_task >> collect_raw_data >> load_to_db >> end_task
-    # start_task >> latest_only_task >> collect_chzzk_live_raw_data_task >> collect_chzzk_channel_raw_data_from_live_task
-    # collect_chzzk_live_raw_data_task >> load_chzzk_live_snapshots_task >> end_task
-    # collect_chzzk_channel_raw_data_from_live_task >> [load_chzzk_channel_snapshots_task, load_chzzk_channels_task] >> end_task
