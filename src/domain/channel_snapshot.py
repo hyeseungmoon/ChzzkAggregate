@@ -1,13 +1,12 @@
 from typing import List
 from pydantic import ConfigDict, BaseModel
 from pydantic.alias_generators import to_camel
+from datetime import datetime
 
-class ChannelItem(BaseModel):
+class ChannelSnapshot(BaseModel):
     channel_id: str
-    channel_name: str
-    channel_image_url: str | None
     follower_count: int
-    verified_mark: bool
+    timestamp: datetime
 
     model_config = ConfigDict(
         alias_generator=to_camel,

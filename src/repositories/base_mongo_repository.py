@@ -16,6 +16,7 @@ class BaseMongoRepository:
         self.client = MongoClient(uri)
         self.db = self.client.get_database(db_name)
         self.collection = self.db.get_collection(collection_name)
+        self.collection_name = collection_name
 
     def insert_batch(self, items: List[dict]) -> int:
         if not items:
@@ -25,13 +26,16 @@ class BaseMongoRepository:
             return len(result.inserted_ids)
 
         except BulkWriteError as bwe:
-            logging.exception("insert_batch failed")
-            logging.debug(
-                "failed docs count=%d, errors=%s",
-                len(bwe.details.get("writeErrors", [])),
-                bwe.details.get("writeErrors"),
-            )
-            raise
-
+            write_errors = bwe.details.get("writeErrors", [])
+            for err in write_errors:
+                if err.get("code") != 11000:  # DuplicateKey
+                    logging.exception("insert_batch failed")
+                    logging.debug(
+                        "failed docs count=%d, errors=%s",
+                        len(bwe.details.get("writeErrors", [])),
+                        bwe.details.get("writeErrors"),
+                    )
+                    raise
+            logging.info("Skipping Duplicate insertion")
         except Exception:
             raise
