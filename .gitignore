@@ -296,3 +296,5 @@ http-client.private.env.json
 
 # AIRFLOW
 config
+logs
+plugins
