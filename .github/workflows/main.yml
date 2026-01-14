@@ -19,7 +19,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      # 3. 원격 서버에 접속 후 git clone 및 환경변수 세팅
+      # 3. 원격 서버에 접속 후 배포 수행
       - name: Deploy to Server
         run: |
           SERVER_USER="${{ secrets.SSH_USER }}"
@@ -28,25 +28,31 @@ jobs:
           REPO_URL="https://github.com/hyeseungmoon/ChzzkAggregate.git"
           TARGET_DIR="/home/$SERVER_USER/PycharmProjects/ChzzkAggregate"
 
+          # SSH 접속 후 스크립트 실행 (Heredoc 방식)
           ssh -p $SERVER_PORT \
               -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-                 $SERVER_USER@$SERVER_HOST bash -c "'
-            echo \"Deploying to $SERVER_HOST...\"
+              $SERVER_USER@$SERVER_HOST << EOF
+            echo "Deploying to $SERVER_HOST..."
 
-            # 기존 프로젝트 삭제 후 clone
-            rm -rf $TARGET_DIR
-            git clone $REPO_URL $TARGET_DIR
-            cd $TARGET_DIR
+            # 디렉토리가 없으면 생성, 있으면 이동 후 최신화
+            if [ ! -d "$TARGET_DIR" ]; then
+              git clone $REPO_URL $TARGET_DIR
+              cd $TARGET_DIR
+            else
+              cd $TARGET_DIR
+              git pull origin main
+            fi
 
-            # .env 파일 생성 및 GitHub Secrets에서 가져온 값 입력
-            echo \"AIRFLOW_CONN_CHZZK_API_CONN=${{ secrets.AIRFLOW_CONN_CHZZK_API_CONN }}\" > .env
-            echo \"AIRFLOW_CONN_MONGODB_CONN=${{ secrets.AIRFLOW_CONN_MONGODB_CONN }}\" >> .env
-            echo \"AIRFLOW_CONN_S3_CONN=${{ secrets.AIRFLOW_CONN_S3_CONN }}\" >> .env
+            # .env 파일 생성 (매번 새로 생성하여 Secrets 동기화)
+            cat << ENV_EOF > .env
+          AIRFLOW_CONN_CHZZK_API_CONN=${{ secrets.AIRFLOW_CONN_CHZZK_API_CONN }}
+          AIRFLOW_CONN_MONGODB_CONN=${{ secrets.AIRFLOW_CONN_MONGODB_CONN }}
+          AIRFLOW_CONN_S3_CONN=${{ secrets.AIRFLOW_CONN_S3_CONN }}
+          ENV_EOF
 
             # bash 스크립트 실행
             chmod +x setup_airflow.bash
-            bash setup_airflow.bash
+            ./setup_airflow.bash
 
-            echo \"Deployment finished.\"
-          '"
+            echo "Deployment finished."
+          EOF
