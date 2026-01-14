@@ -18,6 +18,11 @@ jobs:
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+        
+      - name: add SSH key to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keygen -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
       # 3. 원격 서버에 접속 후 git clone 및 환경변수 세팅
       - name: Deploy to Server
