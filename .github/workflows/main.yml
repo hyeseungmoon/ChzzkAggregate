@@ -1,5 +1,9 @@
 name: Deploy Airflow
 
+concurrency:
+  group: deploy-airflow
+  cancel-in-progress: false
+
 on:
   push:
     branches:
