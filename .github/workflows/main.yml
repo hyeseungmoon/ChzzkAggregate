@@ -9,50 +9,39 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      # 1. 리포지토리 checkout
+      # 1. 소스 코드 체크아웃
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      # 2. SSH 키 세팅
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.9.0
+      # 2. SSH를 통해 서버에 파일 복사 (rsync 활용)
+      # git pull보다 rsync가 더 빠르고 권한 관리가 쉽습니다.
+      - name: Copy files to Server
+        uses: appleboy/scp-action@v0.1.7
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          source: "."
+          target: "/home/${{ secrets.SSH_USER }}/PycharmProjects/ChzzkAggregate"
+          rm: false # 기존 파일 유지하며 덮어쓰기
 
-      # 3. 원격 서버에 접속 후 배포 수행
-      - name: Deploy to Server
-        run: |
-          SERVER_USER="${{ secrets.SSH_USER }}"
-          SERVER_HOST="${{ secrets.SSH_HOST }}"
-          SERVER_PORT="${{ secrets.SSH_PORT }}"
-          REPO_URL="https://github.com/hyeseungmoon/ChzzkAggregate.git"
-          TARGET_DIR="/home/$SERVER_USER/PycharmProjects/ChzzkAggregate"
-
-          # SSH 접속 후 스크립트 실행 (Heredoc 방식)
-          ssh -p $SERVER_PORT \
-              -o StrictHostKeyChecking=no \
-              $SERVER_USER@$SERVER_HOST << EOF
-            echo "Deploying to $SERVER_HOST..."
-
-            # 디렉토리가 없으면 생성, 있으면 이동 후 최신화
-            if [ ! -d "$TARGET_DIR" ]; then
-              git clone $REPO_URL $TARGET_DIR
-              cd $TARGET_DIR
-            else
-              cd $TARGET_DIR
-              git pull origin main
-            fi
-
-            # .env 파일 생성 (매번 새로 생성하여 Secrets 동기화)
-cat << ENV_EOF > .env
-AIRFLOW_CONN_CHZZK_API_CONN=${{ secrets.AIRFLOW_CONN_CHZZK_API_CONN }}
-AIRFLOW_CONN_MONGODB_CONN=${{ secrets.AIRFLOW_CONN_MONGODB_CONN }}
-AIRFLOW_CONN_S3_CONN=${{ secrets.AIRFLOW_CONN_S3_CONN }}
-ENV_EOF
-
-            # bash 스크립트 실행
+      # 3. 원격 서버에서 환경 변수 설정 및 스크립트 실행
+      - name: Execute Remote Commands
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            cd /home/${{ secrets.SSH_USER }}/PycharmProjects/ChzzkAggregate
+            
+            # .env 파일 생성 (보안을 위해 서버에서 직접 생성)
+            echo "AIRFLOW_CONN_CHZZK_API_CONN='${{ secrets.AIRFLOW_CONN_CHZZK_API_CONN }}'" > .env
+            echo "AIRFLOW_CONN_MONGODB_CONN='${{ secrets.AIRFLOW_CONN_MONGODB_CONN }}'" >> .env
+            echo "AIRFLOW_CONN_S3_CONN='${{ secrets.AIRFLOW_CONN_S3_CONN }}'" >> .env
+            
+            # 실행 권한 부여 및 배포 스크립트 실행
             chmod +x setup_airflow.bash
             ./setup_airflow.bash
-
-            echo "Deployment finished."
-          EOF
