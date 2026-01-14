@@ -44,11 +44,11 @@ jobs:
             fi
 
             # .env 파일 생성 (매번 새로 생성하여 Secrets 동기화)
-            cat << ENV_EOF > .env
-          AIRFLOW_CONN_CHZZK_API_CONN=${{ secrets.AIRFLOW_CONN_CHZZK_API_CONN }}
-          AIRFLOW_CONN_MONGODB_CONN=${{ secrets.AIRFLOW_CONN_MONGODB_CONN }}
-          AIRFLOW_CONN_S3_CONN=${{ secrets.AIRFLOW_CONN_S3_CONN }}
-          ENV_EOF
+cat << ENV_EOF > .env
+AIRFLOW_CONN_CHZZK_API_CONN=${{ secrets.AIRFLOW_CONN_CHZZK_API_CONN }}
+AIRFLOW_CONN_MONGODB_CONN=${{ secrets.AIRFLOW_CONN_MONGODB_CONN }}
+AIRFLOW_CONN_S3_CONN=${{ secrets.AIRFLOW_CONN_S3_CONN }}
+ENV_EOF
 
             # bash 스크립트 실행
             chmod +x setup_airflow.bash
