@@ -74,7 +74,8 @@ with DAG(
         return [d["channelId"] for d in live_items]
 
     @task
-    def collect_chzzk_channel_raw_data(channel_ids, ts_nodash, **context):
+    def collect_chzzk_channel_raw_data(channel_ids, **context):
+        ts_nodash = context["ts_nodash"]
         chzzk_client = get_chzzk_client()
         channel_items = parse_channel_data(chzzk_client, channel_ids)
         hook = S3Hook(aws_conn_id=S3_CONN_ID)
@@ -171,8 +172,8 @@ with DAG(
     @task_group
     def collect_raw_data():
         t1 = collect_chzzk_live_raw_data()
-        t2 = extract_channel_ids_from_live_raw_data(t1)
-        collect_chzzk_channel_raw_data(t2)
+        t2 = extract_channel_ids_from_live_raw_data()
+        t1 >> t2 >> collect_chzzk_channel_raw_data(t2)
 
     @task_group
     def load_to_db():
