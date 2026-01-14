@@ -24,10 +24,11 @@ jobs:
         run: |
           SERVER_USER="${{ secrets.SSH_USER }}"
           SERVER_HOST="${{ secrets.SSH_HOST }}"
+          SERVER_PORT="${{ secrets.SSH_PORT }}"
           REPO_URL="https://github.com/hyeseungmoon/ChzzkAggregate.git"
           TARGET_DIR="/home/$SERVER_USER/PycharmProjects/ChzzkAggregate"
 
-          ssh $SERVER_USER@$SERVER_HOST bash -c "'
+          ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST bash -c "'
             echo \"Deploying to $SERVER_HOST...\"
 
             # 기존 프로젝트 삭제 후 clone
