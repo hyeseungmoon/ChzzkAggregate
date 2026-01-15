@@ -1,12 +1,12 @@
 import logging
+from abc import abstractmethod, ABC
 
 from pymongo import MongoClient
-from typing import List
+from typing import List, TypeVar
 
 from pymongo.errors import BulkWriteError
 
-
-class BaseMongoRepository:
+class BaseMongoRepository[T](ABC):
     def __init__(
         self,
         uri: str,
@@ -18,11 +18,11 @@ class BaseMongoRepository:
         self.collection = self.db.get_collection(collection_name)
         self.collection_name = collection_name
 
-    def insert_batch(self, items: List[dict]) -> int:
-        if not items:
+    def _insert_batch(self, entities: List[dict]) -> int:
+        if not entities:
             return 0
         try:
-            result = self.collection.insert_many(items, ordered=False)
+            result = self.collection.insert_many(entities, ordered=False)
             return len(result.inserted_ids)
 
         except BulkWriteError as bwe:
@@ -39,3 +39,7 @@ class BaseMongoRepository:
             logging.info("Skipping Duplicate insertion")
         except Exception:
             raise
+
+    @abstractmethod
+    def _to_dict(self, entity:T) -> dict:
+        ...
