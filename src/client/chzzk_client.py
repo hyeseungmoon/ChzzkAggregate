@@ -68,7 +68,8 @@ def parse_channel_data(chzzk_client:ChzzkClient, channel_ids: List[str]) -> List
     logging.info("Start Parsing Channel Items")
     channel_items = []
     try:
-        for batch_channel_ids in channel_ids[::20]:
+        for i in range(0, len(channel_ids), 20):
+            batch_channel_ids = channel_ids[i:i + 20]
             content = chzzk_client.get("/open/v1/channels", params={"channelIds": batch_channel_ids}).content
             documents = content.get("data")
             channel_items.extend(documents)

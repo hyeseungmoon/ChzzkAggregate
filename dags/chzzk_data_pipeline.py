@@ -2,7 +2,7 @@ import logging
 from typing import List
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.http.hooks.http import HttpHook
-from airflow.providers.mongo.hooks.mongo import MongoHook
+from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow import DAG
 from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.providers.standard.operators.latest_only import LatestOnlyOperator
@@ -10,18 +10,19 @@ from airflow.sdk import task_group, task
 import json
 from io import BytesIO
 from datetime import datetime
-
 from client.chzzk_client import ChzzkClient, parse_live_data, parse_channel_data
 from domain.channel import Channel
 from domain.channel_snapshot import ChannelSnapshot
 from domain.live_snapshot import LiveSnapshot
-from repositories.channel_snapshot_repository import ChannelSnapshotRepository
-from repositories.live_snapshot_repository import LiveSnapshotRepository
-from repositories.channel_repository import ChannelRepository
+
+from repositories.sqlalchemy.sqlalchemy_channel_repository import SqlAlchemyChannelRepository
+from repositories.sqlalchemy.sqlalchemy_channel_snapshot_repository import SqlAlchemyChannelSnapshotRepository
+from repositories.sqlalchemy.sqlalchemy_live_snapshot_repository import SqlAlchemyLiveSnapshotRepository
 
 CHZZK_API_CONN_ID = "CHZZK_API_CONN"
 S3_CONN_ID = "S3_CONN"
 MONGODB_CONN_ID = "MONGODB_CONN"
+POSTGRES_CONN_ID = "POSTGRES_CONN"
 
 S3_BUCKET_NAME = "chzzk-bucket"
 S3_PREFIX_LIVE_RAW_DATA = "live_raw_data"
@@ -50,11 +51,12 @@ with DAG(
     description="Chzzk DataPipeline",
     catchup=False,
     max_active_runs=1,
-    # schedule="*/30 * * * *",
-    schedule=None,
+    schedule="*/30 * * * *",
     tags={"chzzk_api", "s3", "chzzk", "live_items", "channel_items"}):
     @task
-    def collect_chzzk_live_raw_data(ts_nodash, **context):
+    def collect_chzzk_live_raw_data(**context):
+        ts_nodash = context["ts_nodash"]
+        logging.info(ts_nodash)
         chzzk_client = get_chzzk_client()
         live_items = parse_live_data(chzzk_client)
         hook = S3Hook(aws_conn_id=S3_CONN_ID)
@@ -67,7 +69,9 @@ with DAG(
         )
 
     @task
-    def extract_channel_ids_from_live_raw_data(ts_nodash, **context):
+    def extract_channel_ids_from_live_raw_data(**context):
+        ts_nodash = context["ts_nodash"]
+        logging.info(ts_nodash)
         key = get_s3_key(S3_PREFIX_LIVE_RAW_DATA, ts_nodash)
         hook = S3Hook(aws_conn_id=S3_CONN_ID)
         live_items = json.loads(hook.read_key(key, bucket_name=S3_BUCKET_NAME))
@@ -76,10 +80,12 @@ with DAG(
     @task
     def collect_chzzk_channel_raw_data(channel_ids, **context):
         ts_nodash = context["ts_nodash"]
+        logging.info(ts_nodash)
         chzzk_client = get_chzzk_client()
         channel_items = parse_channel_data(chzzk_client, channel_ids)
         hook = S3Hook(aws_conn_id=S3_CONN_ID)
         key = get_s3_key(S3_PREFIX_CHANNEL_RAW_DATA, ts_nodash)
+        logging.info(key)
         hook.load_file_obj(
             file_obj=BytesIO(json.dumps(channel_items, ensure_ascii=False).encode("utf-8")),
             key=key,
@@ -87,75 +93,51 @@ with DAG(
             replace=True
         )
 
-    def load_snapshots_from_s3(
-            *,
-            s3_prefix: str,
-            domain_model,
-            repository_cls,
-            ts_nodash: str,
-    ):
-        s3_hook = S3Hook(aws_conn_id=S3_CONN_ID)
-        mongo_hook = MongoHook(mongo_conn_id=MONGODB_CONN_ID)
-
-        key = get_s3_key(s3_prefix, ts_nodash)
-        raw_data = json.loads(s3_hook.read_key(key, bucket_name=S3_BUCKET_NAME))
-
-        timestamp = datetime.strptime(ts_nodash, "%Y%m%dT%H%M%S")
-        repo = repository_cls(mongo_hook.uri)
-
-        def safe_parse(data):
-            try:
-                snapshot = domain_model(**data, timestamp=timestamp)
-                return snapshot.model_dump()
-            except Exception as e:
-                logging.error(
-                    f"Parsing failed for {data.get('live_id')}: {e}"
-                )
-                return None
-
-        snapshots = list(filter(None, map(safe_parse, raw_data)))
-        repo.insert_batch(snapshots)
-
     @task
     def load_chzzk_live_snapshots(ts_nodash, **context):
-        load_snapshots_from_s3(
-            s3_prefix=S3_PREFIX_LIVE_RAW_DATA,
-            domain_model=LiveSnapshot,
-            repository_cls=LiveSnapshotRepository,
-            ts_nodash=ts_nodash,
-        )
+        s3_hook = S3Hook(aws_conn_id=S3_CONN_ID)
+        postgres_hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
+        live_snapshots_repository = SqlAlchemyLiveSnapshotRepository(postgres_hook.sqlalchemy_url)
+
+        key = get_s3_key(S3_PREFIX_LIVE_RAW_DATA, ts_nodash)
+        raw_data_list = json.loads(s3_hook.read_key(key, bucket_name=S3_BUCKET_NAME))
+        timestamp = datetime.strptime(ts_nodash, "%Y%m%dT%H%M%S")
+        live_snapshots = [
+            LiveSnapshot(**raw_data, timestamp=timestamp)
+            for raw_data in raw_data_list
+        ]
+        live_snapshots_repository.save_live_snapshots(live_snapshots)
 
     @task
     def load_chzzk_channel_snapshots(ts_nodash, **context):
-        load_snapshots_from_s3(
-            s3_prefix=S3_PREFIX_CHANNEL_RAW_DATA,
-            domain_model=ChannelSnapshot,
-            repository_cls=ChannelSnapshotRepository,
-            ts_nodash=ts_nodash,
-        )
+        s3_hook = S3Hook(aws_conn_id=S3_CONN_ID)
+
+        postgres_hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
+        channel_snapshots_repository = SqlAlchemyChannelSnapshotRepository(postgres_hook.sqlalchemy_url)
+
+        key = get_s3_key(S3_PREFIX_CHANNEL_RAW_DATA, ts_nodash)
+        raw_data_list = json.loads(s3_hook.read_key(key, bucket_name=S3_BUCKET_NAME))
+        timestamp = datetime.strptime(ts_nodash, "%Y%m%dT%H%M%S")
+        channel_snapshots = [
+            ChannelSnapshot(**raw_data, timestamp=timestamp)
+            for raw_data in raw_data_list
+        ]
+        channel_snapshots_repository.save_channel_snapshots(channel_snapshots)
 
     @task
     def load_chzzk_channels(ts_nodash, **context):
         s3_hook = S3Hook(aws_conn_id=S3_CONN_ID)
-        mongo_hook = MongoHook(mongo_conn_id=MONGODB_CONN_ID)
 
-        key = f"{S3_PREFIX_CHANNEL_RAW_DATA}/{ts_nodash}.json"
-        raw_data = json.loads(s3_hook.read_key(key, bucket_name=S3_BUCKET_NAME))
+        postgres_hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
+        channel_repository = SqlAlchemyChannelRepository(postgres_hook.sqlalchemy_url)
 
-        repo = ChannelRepository(mongo_hook.uri)
-
-        def safe_parse(data):
-            try:
-                channel = Channel(**data)
-                return channel.model_dump()
-            except Exception as e:
-                logging.error(
-                    f"Channel parsing failed for {data.get('channel_id')}: {e}"
-                )
-                return None
-
-        channels = list(filter(None, map(safe_parse, raw_data)))
-        repo.insert_batch(channels)
+        key = get_s3_key(S3_PREFIX_CHANNEL_RAW_DATA, ts_nodash)
+        raw_data_list = json.loads(s3_hook.read_key(key, bucket_name=S3_BUCKET_NAME))
+        channels = [
+            Channel(**raw_data)
+            for raw_data in raw_data_list
+        ]
+        channel_repository.save_channels(channels)
 
     start_task = EmptyOperator(
         task_id='start_task'
@@ -173,12 +155,11 @@ with DAG(
     def collect_raw_data():
         t1 = collect_chzzk_live_raw_data()
         t2 = extract_channel_ids_from_live_raw_data()
-        t1 >> t2 >> collect_chzzk_channel_raw_data(t2)
+        t3 = collect_chzzk_channel_raw_data(t2)
+        t1 >> t2 >> t3
 
     @task_group
     def load_to_db():
-        load_chzzk_live_snapshots()
-        load_chzzk_channel_snapshots()
-        load_chzzk_channels()
+        load_chzzk_channels() >> [load_chzzk_live_snapshots(), load_chzzk_channel_snapshots()]
 
     start_task >> latest_only_task >> collect_raw_data() >> load_to_db() >> end_task
