@@ -298,3 +298,5 @@ http-client.private.env.json
 config
 logs
 plugins
+
+/src/conn_settings.py

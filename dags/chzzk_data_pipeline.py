@@ -158,8 +158,22 @@ with DAG(
         t3 = collect_chzzk_channel_raw_data(t2)
         t1 >> t2 >> t3
 
+    @task(
+        trigger_rule='none_failed',
+    )
+    def check_s3_key_exists(**context):
+        ts_nodash = context["ts_nodash"]
+        s3_hook = S3Hook(aws_conn_id=S3_CONN_ID)
+        key = get_s3_key(s3_prefix=S3_PREFIX_LIVE_RAW_DATA, ts_nodash=ts_nodash)
+        if s3_hook.check_for_key(key, bucket_name=S3_BUCKET_NAME):
+            return
+        else:
+            raise Exception(f"S3 key {key} doesn't exist")
+
     @task_group
     def load_to_db():
         load_chzzk_channels() >> [load_chzzk_live_snapshots(), load_chzzk_channel_snapshots()]
 
-    start_task >> latest_only_task >> collect_raw_data() >> load_to_db() >> end_task
+    s3_key_exists = check_s3_key_exists()
+    start_task >> latest_only_task >> collect_raw_data() >> s3_key_exists >>  load_to_db() >> end_task
+    latest_only_task >> s3_key_exists
