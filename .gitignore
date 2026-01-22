@@ -135,7 +135,7 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
+.env.*
 .envrc
 .venv
 env/
@@ -299,4 +299,4 @@ config
 logs
 plugins
 
-/src/conn_settings.py
+/src/conn.py

@@ -48,8 +48,8 @@ with DAG(
     def is_run_backfill(**context):
         dag_run = context["dag_run"]
         if dag_run.run_type == DagRunType.BACKFILL_JOB:
-            return "skip_task"
-        return "real_task"
+            return "check_s3_key_exists"
+        return "collect_chzzk_live_raw_data"
 
 
     @task
