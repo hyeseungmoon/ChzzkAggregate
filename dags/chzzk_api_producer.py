@@ -2,9 +2,8 @@ import logging
 from typing import List
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.http.hooks.http import HttpHook
-from airflow import DAG, Asset
 from airflow.providers.standard.operators.empty import EmptyOperator
-from airflow.sdk import task, Metadata, Label
+from airflow.sdk import task, Metadata, Label, dag
 import json
 from io import BytesIO
 from datetime import datetime
@@ -14,11 +13,8 @@ from airflow.utils.types import DagRunType
 from client.chzzk_client import ChzzkClient, parse_live_data, parse_channel_data
 from assets import s3_live_data, s3_channel_data, parse_s3_uri
 
+
 CHZZK_API_CONN_ID = "CHZZK_API_CONN"
-S3_CONN_ID = "S3_CONN"
-S3_BUCKET_NAME = "hyeseungmoon-bucket"
-S3_LIVE_PREIX = "live_data_raw"
-S3_CHANNEL_PREIX = "channel_data_raw"
 
 def get_chzzk_client():
     hook = HttpHook(http_conn_id=CHZZK_API_CONN_ID)
@@ -36,14 +32,17 @@ def get_s3_key(s3_prefix:str, ts_nodash:str):
     return f"{s3_prefix}/{ts_nodash}.json"
 
 
-with DAG(
-    dag_id="chzzk_api_producer",
-    start_date=datetime(2026, 1, 13),
+@dag(start_date=datetime(2026, 1, 13),
     description="Chzzk DataPipeline",
     catchup=False,
     max_active_runs=1,
     schedule="*/30 * * * *",
-    tags={"chzzk_api", "s3", "chzzk", "live_items", "channel_items"}):
+    params={"S3_BUCKET_NAME": "hyeseungmoon-chzzk-bucket",
+            "S3_LIVE_PREFIX": "live_data_raw",
+            "S3_CHANNEL_PREFIX": "channel_data_raw",
+            "S3_CONN_ID": "S3_CONN"},
+    tags={"chzzk", "producer"})
+def chzzk_api_producer():
     @task.branch
     def is_run_backfill(**context):
         dag_run = context["dag_run"]
@@ -51,25 +50,33 @@ with DAG(
             return "check_s3_key_exists"
         return "collect_chzzk_live_raw_data"
 
-
     @task
-    def check_s3_key_exists(*, ts_nodash) -> list[Asset]:
-        s3_hook = S3Hook(aws_conn_id=S3_CONN_ID)
-        for asset in [s3_live_data, s3_channel_data]:
-            key = get_s3_key(s3_prefix=S3_LIVE_PREIX, ts_nodash=ts_nodash)
-            if not s3_hook.check_for_key(key, bucket_name=S3_BUCKET_NAME):
+    def check_s3_key_exists(*, ts_nodash, params):
+        s3_live_prefix = params["S3_LIVE_PREFIX"]
+        s3_channel_prefix = params["S3_CHANNEL_PREFIX"]
+        s3_conn_id = params["S3_CONN_ID"]
+        s3_bucket_name = params["S3_BUCKET_NAME"]
+
+        s3_hook = S3Hook(aws_conn_id=s3_conn_id)
+        live_key = get_s3_key(s3_prefix=s3_live_prefix, ts_nodash=ts_nodash)
+        channel_key = get_s3_key(s3_prefix=s3_channel_prefix, ts_nodash=ts_nodash)
+        for key in [live_key, channel_key]:
+            if not s3_hook.check_for_key(key, bucket_name=s3_bucket_name):
                 raise Exception(f"S3 key {key} doesn't exist")
-            else:
-                yield Metadata(
-                    asset=asset,
-                    extra={"keys": [key]}
-                )
+
+        for asset, key in zip([s3_live_data, s3_channel_data], [live_key, channel_key]):
+            yield Metadata(
+                asset=asset,
+                extra={"keys": [key]}
+            )
 
     @task
-    def collect_chzzk_live_raw_data(*, ts_nodash:str) -> Asset:
+    def collect_chzzk_live_raw_data(*, params, ts_nodash:str):
+        s3_conn_id = params["S3_CONN_ID"]
+
         chzzk_client = get_chzzk_client()
         live_items = parse_live_data(chzzk_client)
-        hook = S3Hook(aws_conn_id=S3_CONN_ID)
+        hook = S3Hook(aws_conn_id=s3_conn_id)
         bucket_name, prefix = parse_s3_uri(s3_live_data.uri)
         key = get_s3_key(prefix, ts_nodash)
         hook.load_file_obj(
@@ -85,18 +92,22 @@ with DAG(
         )
 
     @task
-    def extract_channel_ids_from_live_raw_data(*, ts_nodash:str) -> List[str]:
+    def extract_channel_ids_from_live_raw_data(*, params, ts_nodash:str) -> List[str]:
+        s3_conn_id = params["S3_CONN_ID"]
+
         bucket_name, prefix = parse_s3_uri(s3_live_data.uri)
         key = get_s3_key(prefix, ts_nodash)
-        hook = S3Hook(aws_conn_id=S3_CONN_ID)
+        hook = S3Hook(aws_conn_id=s3_conn_id)
         live_items = json.loads(hook.read_key(key, bucket_name=bucket_name))
         return [d["channelId"] for d in live_items]
 
     @task
-    def collect_chzzk_channel_raw_data(channel_ids, *, ts_nodash:str) -> Asset:
+    def collect_chzzk_channel_raw_data(channel_ids, *, params, ts_nodash:str):
+        s3_conn_id = params["S3_CONN_ID"]
+
         chzzk_client = get_chzzk_client()
         channel_items = parse_channel_data(chzzk_client, channel_ids)
-        hook = S3Hook(aws_conn_id=S3_CONN_ID)
+        hook = S3Hook(aws_conn_id=s3_conn_id)
         bucket_name, prefix = parse_s3_uri(s3_channel_data.uri)
         key = get_s3_key(prefix, ts_nodash)
         logging.info(key)
@@ -125,3 +136,4 @@ with DAG(
     is_run_backfill >> Label("No") >> t1 >> t2 >> t3 >> end_task
 
 
+chzzk_api_producer()
