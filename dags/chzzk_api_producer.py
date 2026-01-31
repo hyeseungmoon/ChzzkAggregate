@@ -123,7 +123,9 @@ def chzzk_api_producer():
         )
         return s3_channel_data
 
-    end_task = EmptyOperator(task_id="trigger_asset", outlets=[s3_live_data, s3_channel_data])
+    end_task = EmptyOperator(task_id="trigger_asset",
+                             outlets=[s3_live_data, s3_channel_data],
+                             trigger_rule="one_success")
     start_task = EmptyOperator(task_id="start_task")
 
     t1 = collect_chzzk_live_raw_data()
